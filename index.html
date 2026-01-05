@@ -2,16 +2,26 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V15 完整響應版)</title>
+    <!-- 加入 viewport-fit=cover 確保滿版 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V16 手機響應版)</title>
     
     <!-- PWA 設定 -->
     <link rel="manifest" href="manifest.json">
     <script>
       // 只在 http 或 https 協議下註冊 Service Worker，避免預覽環境報錯
       if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
-        navigator.serviceWorker.register('sw.js').catch(err => {
-            console.log('Service Worker 註冊失敗 (預覽模式下正常):', err);
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            // 每次重新整理都檢查並更新 SW
+            for(let registration of registrations) {
+                registration.update();
+            }
+        });
+        
+        navigator.serviceWorker.register('sw.js').then(reg => {
+            console.log('SW registered');
+        }).catch(err => {
+            console.log('SW registration failed (Normal in preview):', err);
         });
       }
     </script>
@@ -27,7 +37,8 @@
     </script>
 
     <style>
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; }
+        /* 使用 dvh 解決手機網址列遮擋問題 */
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; height: 100dvh; }
         
         /* 頁面卡片樣式 */
         .page-card { transition: all 0.3s ease; }
@@ -60,14 +71,14 @@
         }
     </style>
 </head>
-<body class="h-screen flex flex-col overflow-hidden text-gray-800">
+<body class="flex flex-col overflow-hidden text-gray-800">
 
     <!-- Header (響應式調整：手機版直排，電腦版橫排) -->
     <header class="bg-white shadow-sm z-20 p-3 flex flex-col md:flex-row justify-between gap-3 shrink-0">
         <div class="flex justify-between items-center">
             <div class="flex items-center gap-2">
                 <div class="bg-blue-600 text-white p-1.5 rounded-lg font-bold text-lg">N</div>
-                <h1 class="text-lg font-bold text-gray-800 truncate">PDF 轉 PPT <span class="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-0.5 rounded">手機版</span></h1>
+                <h1 class="text-lg font-bold text-gray-800 truncate">PDF 轉 PPT <span class="text-xs font-normal text-white bg-green-500 px-2 py-0.5 rounded">V16</span></h1>
             </div>
         </div>
         
@@ -107,7 +118,7 @@
     <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         
         <!-- Left Panel: Page List -->
-        <!-- 手機版：上方橫向捲動 / 電腦版：左側直式列表 -->
+        <!-- 手機版：上方橫向捲動 (min-h-[100px]) / 電腦版：左側直式列表 (w-80) -->
         <div class="w-full md:w-80 bg-white border-b md:border-b-0 md:border-r flex flex-col shrink-0 transition-all duration-300 z-10" id="leftPanel">
             
             <!-- 控制區 -->
