@@ -4,25 +4,40 @@
     <meta charset="UTF-8">
     <!-- 加入 viewport-fit=cover 確保滿版 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V16 手機響應版)</title>
+    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V17 強制更新版 - 修復預覽錯誤)</title>
     
     <!-- PWA 設定 -->
     <link rel="manifest" href="manifest.json">
     <script>
-      // 只在 http 或 https 協議下註冊 Service Worker，避免預覽環境報錯
-      if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-            // 每次重新整理都檢查並更新 SW
-            for(let registration of registrations) {
-                registration.update();
-            }
-        });
+      // ★★★ V17 修正：強制移除舊的 Service Worker 以清除快取 ★★★
+      // 加入 try-catch 避免在預覽環境 (Preview) 出現 InvalidStateError
+      if ('serviceWorker' in navigator) {
+        try {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for(let registration of registrations) {
+                    registration.unregister().then(function(boolean) {
+                        console.log('Old Service Worker unregistered to force update.');
+                    }).catch(err => console.log('SW unregister skip:', err));
+                }
+            }).catch(err => {
+                console.log('Service Worker access restricted (Normal in preview):', err);
+            });
+        } catch (e) {
+            console.log('Service Worker not available in this context:', e);
+        }
         
-        navigator.serviceWorker.register('sw.js').then(reg => {
-            console.log('SW registered');
-        }).catch(err => {
-            console.log('SW registration failed (Normal in preview):', err);
-        });
+        // 嘗試清除快取存儲
+        try {
+            if ('caches' in window) {
+                caches.keys().then(function(names) {
+                    for (let name of names) {
+                        caches.delete(name);
+                    }
+                }).catch(err => console.log('Cache access restricted:', err));
+            }
+        } catch (e) {
+            console.log('Cache API not available:', e);
+        }
       }
     </script>
     
@@ -78,7 +93,7 @@
         <div class="flex justify-between items-center">
             <div class="flex items-center gap-2">
                 <div class="bg-blue-600 text-white p-1.5 rounded-lg font-bold text-lg">N</div>
-                <h1 class="text-lg font-bold text-gray-800 truncate">PDF 轉 PPT <span class="text-xs font-normal text-white bg-green-500 px-2 py-0.5 rounded">V16</span></h1>
+                <h1 class="text-lg font-bold text-gray-800 truncate">PDF 轉 PPT <span class="text-xs font-normal text-white bg-orange-500 px-2 py-0.5 rounded">V17</span></h1>
             </div>
         </div>
         
@@ -734,6 +749,7 @@
             const pptx = new PptxGenJS();
             pptx.layout = 'LAYOUT_16x9';
             
+            // 手機版/電腦版共用同一個 Checkbox ID (依據當前顯示的)
             const useBgDesktop = document.getElementById('useBgImageDesktop');
             const useBgMobile = document.getElementById('useBgImageMobile');
             // 檢查是否存在，如果都不存在(理論上不應該)，預設 true
