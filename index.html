@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V5+ 視覺修復版)</title>
+    <link rel="manifest" href="manifest.json">
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
+</script>
+    <!-- 引入必要的函式庫 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; }
+        .page-card { transition: all 0.3s ease; }
+        .page-card.active { border: 2px solid #3b82f6; box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.5); }
+        .page-card.done { border-color: #10b981; background-color: #ecfdf5; }
+        .page-card.error { border-color: #ef4444; background-color: #fef2f2; }
+        
+        /* 防止畫布操作時捲動頁面 */
+        canvas { touch-action: none; }
+        
+        /* 吸管模式游標 */
+        .cursor-pipette { cursor: crosshair !important; }
+
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 20px;
+            height: 20px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm z-10 p-4 flex flex-col gap-3">
+        <div class="flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="bg-blue-600 text-white p-2 rounded-lg font-bold text-xl">N</div>
+                <h1 class="text-xl font-bold text-gray-800">PDF 轉 PPT 簡報生成器 <span class="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">V5+ 視覺修復版</span></h1>
+            </div>
+            
+            <div class="flex gap-4 items-center">
+                <div class="flex flex-col items-end">
+                    <label class="text-xs text-gray-500 mb-1">Google Gemini API Key</label>
+                    <input type="password" id="apiKey" class="border rounded px-2 py-1 text-sm w-64 focus:outline-none focus:border-blue-500" placeholder="貼上您的 API Key (AIza...)">
+                </div>
+                <label class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded cursor-pointer transition flex items-center gap-2">
+                    <i data-lucide="folder-open" class="w-4 h-4"></i>
+                    <span>選擇 PDF</span>
+                    <input type="file" id="pdfInput" accept=".pdf" class="hidden">
+                </label>
+                <button id="downloadBtn" onclick="exportPPT()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2" disabled>
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    <span>下載 PPT</span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- V5 匯出說明 -->
+        <div class="flex justify-end gap-4 text-sm text-gray-600 bg-gray-50 p-2 rounded border border-gray-100 items-center">
+            <span class="font-bold text-blue-800 self-center">💡 V5+ 功能：</span>
+            <span>點擊「吸管」取色 -> 用「筆刷」塗掉舊字 -> AI 新字會疊在上面。</span>
+            <label class="flex items-center gap-2 cursor-pointer hover:text-blue-600 border-l pl-4 ml-2">
+                <input type="checkbox" id="useBgImage" class="rounded text-blue-600 focus:ring-blue-500" checked>
+                <span>匯出保留原始底圖</span>
+            </label>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex overflow-hidden">
+        
+        <!-- Left: Preview & List -->
+        <div class="w-1/3 bg-white border-r flex flex-col">
+            <div class="p-3 bg-gray-50 border-b flex flex-col gap-3">
+                
+                <!-- Status Row -->
+                <div class="flex justify-between items-center">
+                    <span id="pageCount" class="font-bold text-gray-700">等待檔案...</span>
+                </div>
+
+                <!-- Range Selector -->
+                <div id="rangeSelector" class="hidden flex flex-col gap-2 text-sm bg-gray-100 p-2 rounded">
+                    <div class="flex items-center gap-3">
+                        <span class="font-bold text-gray-600">處理範圍：</span>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name="rangeType" value="all" checked onchange="toggleRangeInput()" class="text-blue-600"> 全部
+                        </label>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name="rangeType" value="custom" onchange="toggleRangeInput()" class="text-blue-600"> 指定頁數
+                        </label>
+                    </div>
+                    <input type="text" id="customRangeInput" disabled placeholder="例如: 1, 3, 5-8 (半形數字)" class="border rounded px-2 py-1 w-full text-xs disabled:bg-gray-200 disabled:text-gray-400 focus:ring-2 focus:ring-blue-300 outline-none">
+                </div>
+
+                <!-- Buttons & Status -->
+                <div id="controlPanel" class="hidden flex flex-col gap-2">
+                    <div class="flex gap-2">
+                        <button id="autoRunBtn" onclick="startAutoRun()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-2 rounded flex-1 flex items-center justify-center gap-1">
+                            <i data-lucide="rocket" class="w-3 h-3"></i> 自動分析
+                        </button>
+                        <button id="stopBtn" onclick="stopAutoRun()" class="bg-red-500 hover:bg-red-600 text-white text-xs px-3 py-2 rounded hidden flex-1 flex items-center justify-center gap-1">
+                            <i data-lucide="square" class="w-3 h-3"></i> 停止
+                        </button>
+                    </div>
+                </div>
+                <div id="statusMsg" class="bg-yellow-50 text-yellow-800 text-xs p-2 rounded text-center hidden border border-yellow-200">
+                    準備就緒
+                </div>
+            </div>
+            
+            <div id="pagesList" class="flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="text-center text-gray-400 mt-10">
+                    請先上傳 PDF 檔案<br>
+                    <span class="text-xs text-gray-300">V5+ 支援吸管與完整預覽</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Editor/Details -->
+        <div class="w-2/3 bg-gray-50 p-8 overflow-y-auto flex flex-col items-center">
+            <div id="previewArea" class="w-full max-w-5xl bg-white shadow-lg rounded-lg min-h-[600px] p-6 hidden">
+                <div class="flex justify-between items-start mb-4 border-b pb-2">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">編輯與遮蓋</h2>
+                        <p class="text-gray-500 text-sm">請使用筆刷塗掉舊文字，AI 產生的新字會疊在上面。</p>
+                    </div>
+                    <div class="text-right">
+                        <span id="currentStatusBadge" class="bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-sm font-medium">未分析</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-5 gap-6 h-full">
+                    <!-- Image & Canvas Container (Col Span 3) -->
+                    <div class="col-span-3">
+                        <!-- Toolbar -->
+                        <div class="flex items-center gap-2 mb-2 bg-gray-100 p-2 rounded">
+                            <span class="text-xs font-bold text-gray-600 flex items-center gap-1">
+                                <i data-lucide="brush" class="w-3 h-3"></i> 筆刷:
+                            </span>
+                            
+                            <!-- 新增：吸管按鈕 -->
+                            <button id="eyedropperBtn" onclick="toggleEyedropper()" class="p-1 border rounded bg-white hover:bg-gray-100 text-gray-700 flex items-center justify-center transition-colors" title="吸管工具: 吸取背景顏色">
+                                <i data-lucide="pipette" class="w-4 h-4"></i>
+                            </button>
+
+                            <input type="color" id="brushColor" value="#FFFFFF" class="h-6 w-8 p-0 border rounded cursor-pointer" title="筆刷顏色">
+                            <input type="range" id="brushSize" min="5" max="50" value="20" class="w-24" title="筆刷粗細">
+                            <button onclick="clearMask()" class="text-xs bg-white border px-2 py-1 rounded hover:bg-gray-50 text-red-600 flex items-center gap-1 ml-auto" title="清除所有塗鴉">
+                                <i data-lucide="trash-2" class="w-3 h-3"></i> 清除
+                            </button>
+                        </div>
+
+                        <!-- Canvas Stack -->
+                        <!-- ★★★ 修正：加入 max-width, max-height, object-fit 確保完整顯示 ★★★ -->
+                        <div class="relative border rounded-lg bg-gray-200 overflow-hidden flex justify-center items-center" style="min-height: 400px; max-height: 650px;">
+                            <!-- PDF Layer -->
+                            <canvas id="previewCanvas" class="absolute z-10 shadow-sm" style="max-width: 100%; max-height: 100%; object-fit: contain;"></canvas>
+                            <!-- Mask Layer (For drawing) -->
+                            <canvas id="maskCanvas" class="absolute z-20 cursor-crosshair touch-none" style="max-width: 100%; max-height: 100%; object-fit: contain;"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Form (Col Span 2) -->
+                    <div class="col-span-2 space-y-4 flex flex-col">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">投影片標題</label>
+                            <input type="text" id="slideTitle" class="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                        <div class="flex-1">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">內文重點 (每行一點)</label>
+                            <textarea id="slideContent" class="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none h-64 resize-none"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">講者備忘稿</label>
+                            <textarea id="slideNotes" rows="3" class="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50"></textarea>
+                        </div>
+                        <div class="pt-2 flex justify-end">
+                            <button onclick="saveCurrentSlide()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2">
+                                <i data-lucide="save" class="w-4 h-4"></i> 保存修改
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="flex flex-col items-center justify-center h-full text-gray-400">
+                <i data-lucide="mouse-pointer-click" class="w-16 h-16 mb-4 text-gray-300"></i>
+                <p class="text-lg">選擇左側頁面開始編輯</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- JS Logic -->
+    <script>
+        // Init icons safely
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        
+        let pdfDoc = null;
+        let pdfPages = []; 
+        let currentPageIndex = -1;
+        let isAutoRunning = false;
+
+        // Canvas Drawing Variables
+        let isDrawing = false;
+        let isEyedropperActive = false; // 吸管狀態
+        let lastX = 0;
+        let lastY = 0;
+        const maskCanvas = document.getElementById('maskCanvas');
+        const maskCtx = maskCanvas.getContext('2d');
+
+        const apiKeyInput = document.getElementById('apiKey');
+        const fileInput = document.getElementById('pdfInput');
+        const pagesList = document.getElementById('pagesList');
+        const previewArea = document.getElementById('previewArea');
+        const emptyState = document.getElementById('emptyState');
+        const statusMsg = document.getElementById('statusMsg');
+
+        // Form elements
+        const slideTitle = document.getElementById('slideTitle');
+        const slideContent = document.getElementById('slideContent');
+        const slideNotes = document.getElementById('slideNotes');
+
+        // Options
+        const useBgImageCheck = document.getElementById('useBgImage');
+        const customRangeInput = document.getElementById('customRangeInput');
+        
+        // Brush Tools
+        const brushColorInput = document.getElementById('brushColor');
+        const brushSizeInput = document.getElementById('brushSize');
+        const eyedropperBtn = document.getElementById('eyedropperBtn');
+
+        // --- 核心：座標轉換 (解決縮放與偏移問題) ---
+        function getCanvasPoint(e, canvas) {
+            const rect = canvas.getBoundingClientRect();
+            // 計算 Canvas 實際像素與顯示大小的比例
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            // 支援滑鼠與觸控
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+
+        // Setup Drawing Events
+        maskCanvas.addEventListener('mousedown', startDrawing);
+        maskCanvas.addEventListener('mousemove', draw);
+        maskCanvas.addEventListener('mouseup', stopDrawing);
+        maskCanvas.addEventListener('mouseout', stopDrawing);
+        
+        // Touch support
+        maskCanvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            startDrawing(e);
+        }, { passive: false });
+        maskCanvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            draw(e);
+        }, { passive: false });
+        maskCanvas.addEventListener('touchend', stopDrawing);
+
+        // --- 吸管功能邏輯 ---
+        function toggleEyedropper() {
+            isEyedropperActive = !isEyedropperActive;
+            if (isEyedropperActive) {
+                eyedropperBtn.classList.add('bg-blue-100', 'border-blue-500', 'text-blue-600');
+                maskCanvas.classList.add('cursor-pipette');
+            } else {
+                eyedropperBtn.classList.remove('bg-blue-100', 'border-blue-500', 'text-blue-600');
+                maskCanvas.classList.remove('cursor-pipette');
+            }
+        }
+
+        function pickColor(e) {
+            // 從 Preview Canvas (底圖) 取色
+            const pCanvas = document.getElementById('previewCanvas');
+            const pCtx = pCanvas.getContext('2d');
+            const point = getCanvasPoint(e, pCanvas);
+            
+            // 讀取像素
+            const pixel = pCtx.getImageData(point.x, point.y, 1, 1).data;
+            const hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
+            
+            // 設定顏色
+            brushColorInput.value = hex;
+            
+            // 關閉吸管，自動切回筆刷
+            toggleEyedropper();
+        }
+
+        function startDrawing(e) {
+            if (isEyedropperActive) {
+                pickColor(e);
+                return;
+            }
+            isDrawing = true;
+            const point = getCanvasPoint(e, maskCanvas);
+            [lastX, lastY] = [point.x, point.y];
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const point = getCanvasPoint(e, maskCanvas);
+            drawStroke(point.x, point.y);
+        }
+
+        function drawStroke(x, y) {
+            maskCtx.lineJoin = 'round';
+            maskCtx.lineCap = 'round';
+            maskCtx.lineWidth = brushSizeInput.value;
+            maskCtx.strokeStyle = brushColorInput.value;
+            
+            maskCtx.beginPath();
+            maskCtx.moveTo(lastX, lastY);
+            maskCtx.lineTo(x, y);
+            maskCtx.stroke();
+            
+            [lastX, lastY] = [x, y];
+        }
+
+        function stopDrawing() {
+            if (isDrawing) {
+                isDrawing = false;
+                if (currentPageIndex !== -1) {
+                    pdfPages[currentPageIndex].maskData = maskCanvas.toDataURL();
+                }
+            }
+        }
+
+        function clearMask() {
+            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            if (currentPageIndex !== -1) {
+                pdfPages[currentPageIndex].maskData = null;
+            }
+        }
+
+        function toggleRangeInput() {
+            const isCustom = document.querySelector('input[name="rangeType"][value="custom"]').checked;
+            customRangeInput.disabled = !isCustom;
+            if (isCustom) customRangeInput.focus();
+        }
+
+        function parsePageRange(str, totalPages) {
+            if (!str || !str.trim()) return [];
+            const pages = new Set();
+            const parts = str.split(',');
+            for (let part of parts) {
+                part = part.trim();
+                if (part.includes('-')) {
+                    const [start, end] = part.split('-').map(Number);
+                    if (!isNaN(start) && !isNaN(end)) {
+                        for (let i = start; i <= end; i++) pages.add(i);
+                    }
+                } else {
+                    const num = Number(part);
+                    if (!isNaN(num)) pages.add(num);
+                }
+            }
+            return Array.from(pages)
+                .filter(p => p >= 1 && p <= totalPages)
+                .map(p => p - 1)
+                .sort((a, b) => a - b);
+        }
+
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            if (file.type !== 'application/pdf') {
+                alert('請上傳 PDF 檔案');
+                return;
+            }
+
+            const fileReader = new FileReader();
+            fileReader.onload = async function() {
+                const typedarray = new Uint8Array(this.result);
+                try {
+                    statusMsg.textContent = '正在讀取 PDF...';
+                    statusMsg.classList.remove('hidden');
+                    
+                    pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+                    document.getElementById('pageCount').textContent = `共 ${pdfDoc.numPages} 頁`;
+                    document.getElementById('controlPanel').classList.remove('hidden');
+                    document.getElementById('rangeSelector').classList.remove('hidden');
+                    
+                    await renderPageThumbnails();
+                    
+                    statusMsg.textContent = 'PDF 載入完成，請選擇頁面開始塗改或自動分析';
+                    setTimeout(() => statusMsg.classList.add('hidden'), 3000);
+                    
+                } catch (error) {
+                    console.error(error);
+                    alert('讀取 PDF 失敗：' + error.message);
+                }
+            };
+            fileReader.readAsArrayBuffer(file);
+        });
+
+        async function renderPageThumbnails() {
+            pagesList.innerHTML = '';
+            pdfPages = [];
+
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 0.3 }); 
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                canvas.className = 'w-full h-auto border rounded mb-2 bg-white';
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+                const card = document.createElement('div');
+                card.className = 'page-card bg-white p-3 rounded shadow cursor-pointer hover:bg-gray-50';
+                card.onclick = () => selectPage(i - 1);
+                card.innerHTML = `
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold text-gray-600">Page ${i}</span>
+                        <span class="status-badge text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-600">待機</span>
+                    </div>
+                    <div class="thumb-container"></div>
+                    <div class="mt-2 flex justify-between items-center">
+                        <button onclick="analyzeSinglePage(${i-1}, event)" class="analyze-btn text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded hover:bg-blue-200 w-full flex items-center justify-center gap-1">
+                            <i data-lucide="sparkles" class="w-3 h-3"></i> 分析此頁
+                        </button>
+                    </div>
+                `;
+                
+                card.querySelector('.thumb-container').appendChild(canvas);
+                pagesList.appendChild(card);
+                lucide.createIcons({ root: card });
+
+                pdfPages.push({
+                    pageNum: i,
+                    thumbnail: canvas.toDataURL('image/jpeg'),
+                    status: 'idle',
+                    data: null,
+                    cardElement: card,
+                    maskData: null // Store drawing here
+                });
+            }
+        }
+
+        async function selectPage(index) {
+            // Save current mask
+            if (currentPageIndex !== -1 && currentPageIndex !== index) {
+                pdfPages[currentPageIndex].maskData = maskCanvas.toDataURL();
+            }
+
+            currentPageIndex = index;
+            const pageData = pdfPages[index];
+
+            document.querySelectorAll('.page-card').forEach(c => c.classList.remove('active'));
+            pageData.cardElement.classList.add('active');
+            emptyState.classList.add('hidden');
+            previewArea.classList.remove('hidden');
+
+            // Render Preview Canvas
+            const page = await pdfDoc.getPage(pageData.pageNum);
+            const viewport = page.getViewport({ scale: 1.0 });
+            
+            const pCanvas = document.getElementById('previewCanvas');
+            const pCtx = pCanvas.getContext('2d');
+            
+            // Set dimensions for both canvases
+            pCanvas.width = viewport.width;
+            pCanvas.height = viewport.height;
+            maskCanvas.width = viewport.width;
+            maskCanvas.height = viewport.height;
+            
+            // Render PDF
+            await page.render({ canvasContext: pCtx, viewport: viewport }).promise;
+
+            // Restore Mask Data
+            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            if (pageData.maskData) {
+                const img = new Image();
+                img.onload = () => maskCtx.drawImage(img, 0, 0);
+                img.src = pageData.maskData;
+            }
+
+            // Fill Form
+            if (pageData.data) {
+                slideTitle.value = pageData.data.title || '';
+                slideContent.value = (pageData.data.content || []).join('\n');
+                slideNotes.value = pageData.data.speaker_notes || '';
+                updateStatusBadge('success');
+            } else {
+                slideTitle.value = '';
+                slideContent.value = '';
+                slideNotes.value = '';
+                updateStatusBadge(pageData.status);
+            }
+        }
+
+        function updateStatusBadge(status) {
+            const badge = document.getElementById('currentStatusBadge');
+            if (status === 'success') {
+                badge.className = 'bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.textContent = '已完成';
+            } else if (status === 'loading') {
+                badge.className = 'bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.textContent = '分析中...';
+            } else if (status === 'error') {
+                badge.className = 'bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.textContent = '失敗';
+            } else {
+                badge.className = 'bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.textContent = '未分析';
+            }
+        }
+
+        async function analyzeSinglePage(index, event) {
+            if (event) event.stopPropagation(); 
+            
+            const key = apiKeyInput.value.trim();
+            if (!key) { alert('請先輸入 Google Gemini API Key'); return false; }
+
+            const pageItem = pdfPages[index];
+            updatePageUI(index, 'loading');
+            
+            if (!isAutoRunning) selectPage(index); 
+
+            try {
+                const page = await pdfDoc.getPage(pageItem.pageNum);
+                const viewport = page.getViewport({ scale: 1.0 }); 
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                const base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+                const result = await callGeminiAPI(key, base64Image);
+                
+                pageItem.data = result;
+                updatePageUI(index, 'success');
+                
+                if (currentPageIndex === index) {
+                    slideTitle.value = result.title || '';
+                    slideContent.value = (result.content || []).join('\n');
+                    slideNotes.value = result.speaker_notes || '';
+                }
+                
+                checkAllDone();
+                return true;
+
+            } catch (error) {
+                console.error(error);
+                updatePageUI(index, 'error');
+                if (currentPageIndex === index) updateStatusBadge('error');
+                if (!isAutoRunning) {
+                    alert(`分析失敗：${error.message}`);
+                }
+                return false;
+            }
+        }
+
+        // V5 Core API Logic - Exactly as requested
+        async function callGeminiAPI(key, base64Image) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${key}`;
+            const prompt = `分析這張簡報圖片，提取內容並回傳純 JSON。嚴格格式：{"title": "標題", "content": ["重點1", "重點2"], "speaker_notes": "備忘稿"}`;
+
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: prompt },
+                        { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+                    ]
+                }],
+                generationConfig: { responseMimeType: "application/json" }
+            };
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+            
+            if (!response.ok) {
+                if (response.status === 429) throw new Error('Google 流量限制 (429)');
+                throw new Error(data.error?.message || 'API 請求失敗');
+            }
+            try {
+                return JSON.parse(data.candidates[0].content.parts[0].text);
+            } catch (e) {
+                throw new Error('無法解析 JSON');
+            }
+        }
+
+        function updatePageUI(index, status) {
+            const item = pdfPages[index];
+            item.status = status;
+            
+            const badge = item.cardElement.querySelector('.status-badge');
+            const btn = item.cardElement.querySelector('.analyze-btn');
+            item.cardElement.classList.remove('done', 'error');
+
+            if (status === 'loading') {
+                badge.className = 'status-badge text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700';
+                badge.innerHTML = '<div class="loader inline-block align-middle mr-1" style="width:12px;height:12px;"></div>';
+                btn.disabled = true;
+                btn.textContent = '...';
+            } else if (status === 'success') {
+                item.cardElement.classList.add('done');
+                badge.className = 'status-badge text-xs px-2 py-0.5 rounded bg-green-100 text-green-700';
+                badge.textContent = '完成';
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> 重做';
+                lucide.createIcons({ root: item.cardElement });
+            } else if (status === 'error') {
+                item.cardElement.classList.add('error');
+                badge.className = 'status-badge text-xs px-2 py-0.5 rounded bg-red-100 text-red-700';
+                badge.textContent = '失敗';
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> 重試';
+                lucide.createIcons({ root: item.cardElement });
+            }
+        }
+
+        function saveCurrentSlide() {
+            if (currentPageIndex === -1) return;
+            const item = pdfPages[currentPageIndex];
+            
+            // Save mask
+            item.maskData = maskCanvas.toDataURL();
+            
+            if (!item.data) item.data = {};
+            item.data.title = slideTitle.value;
+            item.data.content = slideContent.value.split('\n').filter(line => line.trim() !== '');
+            item.data.speaker_notes = slideNotes.value;
+            
+            if (item.status !== 'success') updatePageUI(currentPageIndex, 'success');
+            checkAllDone();
+            
+            const btn = document.querySelector('button[onclick="saveCurrentSlide()"]');
+            const originalHTML = btn.innerHTML;
+            btn.textContent = '已儲存！';
+            btn.className = 'bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2';
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.className = 'bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2';
+                lucide.createIcons({ root: btn });
+            }, 1000);
+        }
+
+        function checkAllDone() {
+            const hasSuccess = pdfPages.some(p => p.status === 'success');
+            document.getElementById('downloadBtn').disabled = !hasSuccess;
+        }
+
+        async function startAutoRun() {
+            const key = apiKeyInput.value.trim();
+            if (!key) { alert('請輸入 API Key'); return; }
+
+            let pagesToProcess = [];
+            const rangeType = document.querySelector('input[name="rangeType"]:checked').value;
+            
+            if (rangeType === 'all') {
+                pagesToProcess = pdfPages.map((_, i) => i); 
+            } else {
+                const inputStr = customRangeInput.value;
+                pagesToProcess = parsePageRange(inputStr, pdfPages.length);
+                if (pagesToProcess.length === 0) {
+                    alert('請輸入有效的頁數範圍');
+                    return;
+                }
+            }
+
+            isAutoRunning = true;
+            document.getElementById('autoRunBtn').classList.add('hidden');
+            document.getElementById('stopBtn').classList.remove('hidden');
+            statusMsg.classList.remove('hidden');
+
+            for (let i = 0; i < pdfPages.length; i++) {
+                if (!isAutoRunning) break;
+                if (!pagesToProcess.includes(i)) continue;
+                if (pdfPages[i].status === 'success') continue; 
+
+                statusMsg.textContent = `自動分析第 ${i+1} 頁...`;
+                pdfPages[i].cardElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                const success = await analyzeSinglePage(i);
+                
+                if (!success) {
+                    for(let t=60; t>0; t--) {
+                        if(!isAutoRunning) break;
+                        statusMsg.textContent = `⚠️ 第 ${i+1} 頁失敗 (避開流量限制)，休息 ${t} 秒後重試...`;
+                        await wait(1000);
+                    }
+                    if(isAutoRunning) i--; 
+                } else {
+                    if (i < pdfPages.length - 1) {
+                         for(let t=15; t>0; t--) { 
+                             if(!isAutoRunning) break;
+                             statusMsg.textContent = `✅ 第 ${i+1} 頁完成，冷卻 ${t} 秒...`;
+                             await wait(1000);
+                         }
+                    }
+                }
+            }
+            stopAutoRun();
+            statusMsg.textContent = '分析排程結束';
+        }
+
+        function stopAutoRun() {
+            isAutoRunning = false;
+            document.getElementById('autoRunBtn').classList.remove('hidden');
+            document.getElementById('stopBtn').classList.add('hidden');
+        }
+
+        function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+        async function exportPPT() {
+            if (currentPageIndex !== -1) {
+                 pdfPages[currentPageIndex].maskData = maskCanvas.toDataURL();
+            }
+
+            const pptx = new PptxGenJS();
+            pptx.layout = 'LAYOUT_16x9';
+
+            const useBg = useBgImageCheck.checked;
+
+            if (useBg) {
+                const btn = document.getElementById('downloadBtn');
+                btn.disabled = true;
+                btn.textContent = '生成圖片中...';
+                await wait(100);
+            }
+
+            let count = 0;
+            for (let index = 0; index < pdfPages.length; index++) {
+                const page = pdfPages[index];
+                if (page.status !== 'success' || !page.data) continue;
+                count++;
+
+                const slide = pptx.addSlide();
+                const data = page.data;
+
+                if (useBg && pdfDoc) {
+                    try {
+                        const pdfPage = await pdfDoc.getPage(page.pageNum);
+                        const viewport = pdfPage.getViewport({ scale: 1.5 });
+                        const canvas = document.createElement('canvas');
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        const ctx = canvas.getContext('2d');
+                        await pdfPage.render({ canvasContext: ctx, viewport: viewport }).promise;
+                        slide.background = { data: canvas.toDataURL('image/jpeg', 0.8) };
+                    } catch (e) { console.error(e); }
+                }
+
+                if (page.maskData) {
+                    slide.addImage({ 
+                        data: page.maskData, 
+                        x: 0, y: 0, w: '100%', h: '100%' 
+                    });
+                }
+
+                slide.addText(data.title || `Slide ${index+1}`, { 
+                    x: 0.5, y: 0.5, w: '90%', h: 1.2, 
+                    fontSize: 24, bold: true, color: '363636', fontFace: 'Arial',
+                    align: 'center'
+                });
+
+                if (data.content && data.content.length > 0) {
+                    const items = data.content.map(text => ({ text: text, options: { fontSize: 18, breakLine: true } }));
+                    slide.addText(items, { 
+                        x: 0.5, y: 1.8, w: '90%', h: 4.5, 
+                        fontSize: 18, color: '505050', bullet: true, lineSpacing: 35,
+                        valign: 'top'
+                    });
+                }
+
+                if (data.speaker_notes) slide.addNotes(data.speaker_notes);
+            }
+
+            if (useBg) {
+                 const btn = document.getElementById('downloadBtn');
+                 btn.innerHTML = '<i data-lucide="download" class="w-4 h-4"></i><span> 下載 PPT</span>';
+                 btn.disabled = false;
+                 if (typeof lucide !== 'undefined') lucide.createIcons({ root: document.getElementById('downloadBtn') });
+            }
+
+            if (count === 0) { alert('沒有可匯出的頁面'); return; }
+            pptx.writeFile({ fileName: 'NotebookLM_Restored.pptx' });
+        }
+    </script>
+</body>
+</html>
