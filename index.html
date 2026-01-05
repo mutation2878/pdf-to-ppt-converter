@@ -2,14 +2,20 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V5+ 視覺修復版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NotebookLM PDF 轉 PPT 簡報生成器 (V15 完整響應版)</title>
+    
+    <!-- PWA 設定 -->
     <link rel="manifest" href="manifest.json">
-<script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js');
-  }
-</script>
+    <script>
+      // 只在 http 或 https 協議下註冊 Service Worker，避免預覽環境報錯
+      if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
+        navigator.serviceWorker.register('sw.js').catch(err => {
+            console.log('Service Worker 註冊失敗 (預覽模式下正常):', err);
+        });
+      }
+    </script>
+    
     <!-- 引入必要的函式庫 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
@@ -22,6 +28,8 @@
 
     <style>
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; }
+        
+        /* 頁面卡片樣式 */
         .page-card { transition: all 0.3s ease; }
         .page-card.active { border: 2px solid #3b82f6; box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.5); }
         .page-card.done { border-color: #10b981; background-color: #ecfdf5; }
@@ -32,6 +40,10 @@
         
         /* 吸管模式游標 */
         .cursor-pipette { cursor: crosshair !important; }
+
+        /* 手機版優化：隱藏捲軸但保留功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
         .loader {
             border: 3px solid #f3f3f3;
@@ -48,131 +60,124 @@
         }
     </style>
 </head>
-<body class="h-screen flex flex-col overflow-hidden">
+<body class="h-screen flex flex-col overflow-hidden text-gray-800">
 
-    <!-- Header -->
-    <header class="bg-white shadow-sm z-10 p-4 flex flex-col gap-3">
+    <!-- Header (響應式調整：手機版直排，電腦版橫排) -->
+    <header class="bg-white shadow-sm z-20 p-3 flex flex-col md:flex-row justify-between gap-3 shrink-0">
         <div class="flex justify-between items-center">
-            <div class="flex items-center gap-3">
-                <div class="bg-blue-600 text-white p-2 rounded-lg font-bold text-xl">N</div>
-                <h1 class="text-xl font-bold text-gray-800">PDF 轉 PPT 簡報生成器 <span class="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">V5+ 視覺修復版</span></h1>
+            <div class="flex items-center gap-2">
+                <div class="bg-blue-600 text-white p-1.5 rounded-lg font-bold text-lg">N</div>
+                <h1 class="text-lg font-bold text-gray-800 truncate">PDF 轉 PPT <span class="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-0.5 rounded">手機版</span></h1>
+            </div>
+        </div>
+        
+        <div class="flex flex-wrap gap-2 items-center justify-between md:justify-end">
+            <!-- API Key 輸入 -->
+            <div class="flex flex-col items-end w-full md:w-auto">
+                <label class="text-xs text-gray-500 mb-1 hidden md:block">Google Gemini API Key</label>
+                <input type="password" id="apiKey" class="border rounded px-2 py-1.5 text-xs w-full md:w-64 focus:outline-none focus:border-blue-500" placeholder="貼上您的 API Key (AIza...)">
             </div>
             
-            <div class="flex gap-4 items-center">
-                <div class="flex flex-col items-end">
-                    <label class="text-xs text-gray-500 mb-1">Google Gemini API Key</label>
-                    <input type="password" id="apiKey" class="border rounded px-2 py-1 text-sm w-64 focus:outline-none focus:border-blue-500" placeholder="貼上您的 API Key (AIza...)">
-                </div>
-                <label class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded cursor-pointer transition flex items-center gap-2">
+            <div class="flex gap-2 w-full md:w-auto">
+                <label class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded cursor-pointer transition flex items-center justify-center gap-2 flex-1 md:flex-none text-sm shadow-sm">
                     <i data-lucide="folder-open" class="w-4 h-4"></i>
-                    <span>選擇 PDF</span>
+                    <span>PDF</span>
                     <input type="file" id="pdfInput" accept=".pdf" class="hidden">
                 </label>
-                <button id="downloadBtn" onclick="exportPPT()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2" disabled>
+                <button id="downloadBtn" onclick="exportPPT()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 flex-1 md:flex-none text-sm shadow-sm" disabled>
                     <i data-lucide="download" class="w-4 h-4"></i>
-                    <span>下載 PPT</span>
+                    <span>下載</span>
                 </button>
             </div>
         </div>
         
-        <!-- V5 匯出說明 -->
-        <div class="flex justify-end gap-4 text-sm text-gray-600 bg-gray-50 p-2 rounded border border-gray-100 items-center">
-            <span class="font-bold text-blue-800 self-center">💡 V5+ 功能：</span>
-            <span>點擊「吸管」取色 -> 用「筆刷」塗掉舊字 -> AI 新字會疊在上面。</span>
-            <label class="flex items-center gap-2 cursor-pointer hover:text-blue-600 border-l pl-4 ml-2">
-                <input type="checkbox" id="useBgImage" class="rounded text-blue-600 focus:ring-blue-500" checked>
-                <span>匯出保留原始底圖</span>
+        <!-- 說明與選項 -->
+        <div class="flex justify-between md:justify-end gap-4 text-xs text-gray-600 bg-gray-50 p-2 rounded border border-gray-100 items-center">
+            <span class="hidden md:inline">💡 吸管取色 -> 筆刷遮蓋 -> 自動分析</span>
+            <label class="flex items-center gap-2 cursor-pointer hover:text-blue-600 pl-2">
+                <input type="checkbox" id="useBgImageDesktop" class="rounded text-blue-600 focus:ring-blue-500" checked onchange="syncOptions(this)">
+                <span>保留底圖</span>
             </label>
+            <!-- 手機版隱藏選項同步 -->
+            <input type="checkbox" id="useBgImageMobile" class="hidden" checked onchange="syncOptions(this)">
         </div>
     </header>
 
-    <!-- Main Content -->
-    <main class="flex-1 flex overflow-hidden">
+    <!-- Main Content (響應式調整：手機版上下排，電腦版左右排) -->
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         
-        <!-- Left: Preview & List -->
-        <div class="w-1/3 bg-white border-r flex flex-col">
-            <div class="p-3 bg-gray-50 border-b flex flex-col gap-3">
+        <!-- Left Panel: Page List -->
+        <!-- 手機版：上方橫向捲動 / 電腦版：左側直式列表 -->
+        <div class="w-full md:w-80 bg-white border-b md:border-b-0 md:border-r flex flex-col shrink-0 transition-all duration-300 z-10" id="leftPanel">
+            
+            <!-- 控制區 -->
+            <div class="p-2 md:p-3 bg-gray-50 border-b flex justify-between items-center gap-2">
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <span id="pageCount" class="font-bold text-gray-700 text-sm whitespace-nowrap">等待檔案...</span>
+                    <div id="statusMsg" class="bg-yellow-100 text-yellow-800 text-[10px] px-2 py-0.5 rounded hidden truncate">就緒</div>
+                </div>
                 
-                <!-- Status Row -->
-                <div class="flex justify-between items-center">
-                    <span id="pageCount" class="font-bold text-gray-700">等待檔案...</span>
-                </div>
-
-                <!-- Range Selector -->
-                <div id="rangeSelector" class="hidden flex flex-col gap-2 text-sm bg-gray-100 p-2 rounded">
-                    <div class="flex items-center gap-3">
-                        <span class="font-bold text-gray-600">處理範圍：</span>
-                        <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="radio" name="rangeType" value="all" checked onchange="toggleRangeInput()" class="text-blue-600"> 全部
-                        </label>
-                        <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="radio" name="rangeType" value="custom" onchange="toggleRangeInput()" class="text-blue-600"> 指定頁數
-                        </label>
+                <!-- Range & Auto Run -->
+                <div id="controlPanel" class="hidden flex gap-1 items-center">
+                    <div id="rangeSelector" class="flex gap-2 text-xs items-center mr-2 hidden md:flex">
+                        <label class="cursor-pointer flex items-center gap-1"><input type="radio" name="rangeType" value="all" checked onchange="toggleRangeInput()"> 全部</label>
+                        <label class="cursor-pointer flex items-center gap-1"><input type="radio" name="rangeType" value="custom" onchange="toggleRangeInput()"> 指定</label>
+                        <input type="text" id="customRangeInput" disabled placeholder="1,3-5" class="border rounded px-1 w-16 text-xs disabled:bg-gray-200">
                     </div>
-                    <input type="text" id="customRangeInput" disabled placeholder="例如: 1, 3, 5-8 (半形數字)" class="border rounded px-2 py-1 w-full text-xs disabled:bg-gray-200 disabled:text-gray-400 focus:ring-2 focus:ring-blue-300 outline-none">
-                </div>
-
-                <!-- Buttons & Status -->
-                <div id="controlPanel" class="hidden flex flex-col gap-2">
-                    <div class="flex gap-2">
-                        <button id="autoRunBtn" onclick="startAutoRun()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-2 rounded flex-1 flex items-center justify-center gap-1">
-                            <i data-lucide="rocket" class="w-3 h-3"></i> 自動分析
-                        </button>
-                        <button id="stopBtn" onclick="stopAutoRun()" class="bg-red-500 hover:bg-red-600 text-white text-xs px-3 py-2 rounded hidden flex-1 flex items-center justify-center gap-1">
-                            <i data-lucide="square" class="w-3 h-3"></i> 停止
-                        </button>
-                    </div>
-                </div>
-                <div id="statusMsg" class="bg-yellow-50 text-yellow-800 text-xs p-2 rounded text-center hidden border border-yellow-200">
-                    準備就緒
+                    
+                    <button id="autoRunBtn" onclick="startAutoRun()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-2 py-1.5 rounded flex items-center gap-1 shadow-sm">
+                        <i data-lucide="rocket" class="w-3 h-3"></i> <span class="hidden sm:inline">自動</span>
+                    </button>
+                    <button id="stopBtn" onclick="stopAutoRun()" class="hidden bg-red-500 text-white text-xs px-2 py-1.5 rounded">
+                        <i data-lucide="square" class="w-3 h-3"></i>
+                    </button>
                 </div>
             </div>
             
-            <div id="pagesList" class="flex-1 overflow-y-auto p-4 space-y-4">
-                <div class="text-center text-gray-400 mt-10">
-                    請先上傳 PDF 檔案<br>
-                    <span class="text-xs text-gray-300">V5+ 支援吸管與完整預覽</span>
-                </div>
+            <!-- 頁面列表 -->
+            <div id="pagesList" class="flex-1 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto p-2 flex flex-row md:flex-col gap-2 bg-gray-100 md:bg-white min-h-[100px] md:min-h-0">
+                <div class="text-center text-gray-400 text-xs w-full py-4">請先上傳 PDF</div>
             </div>
         </div>
 
-        <!-- Right: Editor/Details -->
-        <div class="w-2/3 bg-gray-50 p-8 overflow-y-auto flex flex-col items-center">
-            <div id="previewArea" class="w-full max-w-5xl bg-white shadow-lg rounded-lg min-h-[600px] p-6 hidden">
-                <div class="flex justify-between items-start mb-4 border-b pb-2">
-                    <div>
-                        <h2 class="text-2xl font-bold text-gray-800">編輯與遮蓋</h2>
-                        <p class="text-gray-500 text-sm">請使用筆刷塗掉舊文字，AI 產生的新字會疊在上面。</p>
+        <!-- Right Panel: Editor -->
+        <div class="flex-1 bg-gray-50 flex flex-col relative overflow-hidden">
+            
+            <!-- Editor Container (置中) -->
+            <div id="previewArea" class="flex-1 flex flex-col p-2 md:p-6 overflow-y-auto hidden">
+                
+                <!-- Top Toolbar (工具列：響應式換行) -->
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2 bg-white p-2 rounded shadow-sm sticky top-0 z-30">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-sm font-bold text-gray-800 hidden sm:block">編輯</h2>
+                        <span id="currentStatusBadge" class="bg-gray-200 text-gray-600 px-2 py-0.5 rounded text-xs">未分析</span>
                     </div>
-                    <div class="text-right">
-                        <span id="currentStatusBadge" class="bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-sm font-medium">未分析</span>
+                    
+                    <!-- Brush Tools -->
+                    <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
+                        <span class="text-xs font-bold text-gray-600 flex items-center gap-1 hidden sm:flex">
+                            <i data-lucide="brush" class="w-3 h-3"></i>
+                        </span>
+                        
+                        <button id="eyedropperBtn" onclick="toggleEyedropper()" class="p-1.5 border rounded bg-gray-50 hover:bg-gray-100 text-gray-700 transition-colors" title="吸管">
+                            <i data-lucide="pipette" class="w-4 h-4"></i>
+                        </button>
+
+                        <input type="color" id="brushColor" value="#FFFFFF" class="h-7 w-8 p-0 border rounded cursor-pointer" title="筆刷顏色">
+                        <input type="range" id="brushSize" min="5" max="50" value="20" class="w-16 sm:w-24" title="筆刷粗細">
+                        
+                        <button onclick="clearMask()" class="text-xs bg-white border px-2 py-1.5 rounded text-red-600 flex items-center gap-1 shadow-sm ml-1">
+                            <i data-lucide="trash-2" class="w-3 h-3"></i> <span class="hidden sm:inline">清除</span>
+                        </button>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-5 gap-6 h-full">
-                    <!-- Image & Canvas Container (Col Span 3) -->
-                    <div class="col-span-3">
-                        <!-- Toolbar -->
-                        <div class="flex items-center gap-2 mb-2 bg-gray-100 p-2 rounded">
-                            <span class="text-xs font-bold text-gray-600 flex items-center gap-1">
-                                <i data-lucide="brush" class="w-3 h-3"></i> 筆刷:
-                            </span>
-                            
-                            <!-- 新增：吸管按鈕 -->
-                            <button id="eyedropperBtn" onclick="toggleEyedropper()" class="p-1 border rounded bg-white hover:bg-gray-100 text-gray-700 flex items-center justify-center transition-colors" title="吸管工具: 吸取背景顏色">
-                                <i data-lucide="pipette" class="w-4 h-4"></i>
-                            </button>
-
-                            <input type="color" id="brushColor" value="#FFFFFF" class="h-6 w-8 p-0 border rounded cursor-pointer" title="筆刷顏色">
-                            <input type="range" id="brushSize" min="5" max="50" value="20" class="w-24" title="筆刷粗細">
-                            <button onclick="clearMask()" class="text-xs bg-white border px-2 py-1 rounded hover:bg-gray-50 text-red-600 flex items-center gap-1 ml-auto" title="清除所有塗鴉">
-                                <i data-lucide="trash-2" class="w-3 h-3"></i> 清除
-                            </button>
-                        </div>
-
-                        <!-- Canvas Stack -->
-                        <!-- ★★★ 修正：加入 max-width, max-height, object-fit 確保完整顯示 ★★★ -->
-                        <div class="relative border rounded-lg bg-gray-200 overflow-hidden flex justify-center items-center" style="min-height: 400px; max-height: 650px;">
+                <!-- Canvas Area (響應式容器，grid 排版) -->
+                <div class="w-full grid grid-cols-1 lg:grid-cols-5 gap-4">
+                    
+                    <!-- 圖片與畫布 (佔滿或佔 3/5) -->
+                    <div class="col-span-1 lg:col-span-3">
+                        <div class="relative border rounded-lg bg-gray-200 overflow-hidden flex justify-center items-center shadow-inner" style="min-height: 300px; max-height: 70vh;">
                             <!-- PDF Layer -->
                             <canvas id="previewCanvas" class="absolute z-10 shadow-sm" style="max-width: 100%; max-height: 100%; object-fit: contain;"></canvas>
                             <!-- Mask Layer (For drawing) -->
@@ -180,77 +185,80 @@
                         </div>
                     </div>
 
-                    <!-- Form (Col Span 2) -->
-                    <div class="col-span-2 space-y-4 flex flex-col">
+                    <!-- 表單 (佔滿或佔 2/5) -->
+                    <div class="col-span-1 lg:col-span-2 space-y-3 bg-white p-3 rounded shadow-sm h-fit">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">投影片標題</label>
-                            <input type="text" id="slideTitle" class="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none">
-                        </div>
-                        <div class="flex-1">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">內文重點 (每行一點)</label>
-                            <textarea id="slideContent" class="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none h-64 resize-none"></textarea>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">標題</label>
+                            <input type="text" id="slideTitle" class="w-full border rounded px-2 py-1.5 text-sm focus:border-blue-500 outline-none bg-gray-50 focus:bg-white">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">講者備忘稿</label>
-                            <textarea id="slideNotes" rows="3" class="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50"></textarea>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">內文 (自動分析結果)</label>
+                            <textarea id="slideContent" rows="6" class="w-full border rounded px-2 py-1.5 text-sm focus:border-blue-500 outline-none bg-gray-50 focus:bg-white resize-y"></textarea>
                         </div>
-                        <div class="pt-2 flex justify-end">
-                            <button onclick="saveCurrentSlide()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2">
-                                <i data-lucide="save" class="w-4 h-4"></i> 保存修改
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">備忘稿</label>
+                            <textarea id="slideNotes" rows="2" class="w-full border rounded px-2 py-1.5 text-sm bg-yellow-50 focus:bg-white outline-none"></textarea>
+                        </div>
+                        <div class="flex justify-end pt-2">
+                            <button onclick="saveCurrentSlide()" class="bg-blue-600 active:bg-blue-700 text-white px-6 py-2 rounded text-sm font-bold shadow-md flex items-center gap-2 w-full sm:w-auto justify-center">
+                                <i data-lucide="save" class="w-4 h-4"></i> 保存此頁
                             </button>
                         </div>
                     </div>
                 </div>
+                
+                <!-- Spacer -->
+                <div class="h-10"></div>
             </div>
 
             <!-- Empty State -->
-            <div id="emptyState" class="flex flex-col items-center justify-center h-full text-gray-400">
-                <i data-lucide="mouse-pointer-click" class="w-16 h-16 mb-4 text-gray-300"></i>
-                <p class="text-lg">選擇左側頁面開始編輯</p>
+            <div id="emptyState" class="flex-1 flex flex-col items-center justify-center text-gray-400 p-8">
+                <i data-lucide="mouse-pointer-click" class="w-12 h-12 mb-2 opacity-50"></i>
+                <p class="text-sm">請選擇上方頁面開始編輯</p>
             </div>
         </div>
     </main>
 
     <!-- JS Logic -->
     <script>
-        // Init icons safely
+        // Init Icons
         if (typeof lucide !== 'undefined') lucide.createIcons();
         
+        // --- 變數與狀態 ---
         let pdfDoc = null;
         let pdfPages = []; 
         let currentPageIndex = -1;
         let isAutoRunning = false;
 
-        // Canvas Drawing Variables
+        // 畫布變數
         let isDrawing = false;
         let isEyedropperActive = false; // 吸管狀態
         let lastX = 0;
         let lastY = 0;
         const maskCanvas = document.getElementById('maskCanvas');
         const maskCtx = maskCanvas.getContext('2d');
+        const previewCanvas = document.getElementById('previewCanvas');
 
+        // UI 元素
         const apiKeyInput = document.getElementById('apiKey');
         const fileInput = document.getElementById('pdfInput');
         const pagesList = document.getElementById('pagesList');
         const previewArea = document.getElementById('previewArea');
         const emptyState = document.getElementById('emptyState');
         const statusMsg = document.getElementById('statusMsg');
-
-        // Form elements
-        const slideTitle = document.getElementById('slideTitle');
-        const slideContent = document.getElementById('slideContent');
-        const slideNotes = document.getElementById('slideNotes');
-
-        // Options
-        const useBgImageCheck = document.getElementById('useBgImage');
-        const customRangeInput = document.getElementById('customRangeInput');
-        
-        // Brush Tools
         const brushColorInput = document.getElementById('brushColor');
         const brushSizeInput = document.getElementById('brushSize');
         const eyedropperBtn = document.getElementById('eyedropperBtn');
 
-        // --- 核心：座標轉換 (解決縮放與偏移問題) ---
+        // 同步手機/電腦版選項
+        function syncOptions(el) {
+            const val = el.checked;
+            document.getElementById('useBgImageDesktop').checked = val;
+            document.getElementById('useBgImageMobile').checked = val;
+        }
+
+        // --- 核心：座標轉換 (支援 RWD 縮放) ---
+        // 這是解決手機上「點不到位」的關鍵函式
         function getCanvasPoint(e, canvas) {
             const rect = canvas.getBoundingClientRect();
             // 計算 Canvas 實際像素與顯示大小的比例
@@ -275,13 +283,15 @@
         
         // Touch support
         maskCanvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
+            if (e.target === maskCanvas) e.preventDefault(); 
             startDrawing(e);
         }, { passive: false });
+        
         maskCanvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
+            if (e.target === maskCanvas) e.preventDefault();
             draw(e);
         }, { passive: false });
+        
         maskCanvas.addEventListener('touchend', stopDrawing);
 
         // --- 吸管功能邏輯 ---
@@ -303,11 +313,11 @@
             const point = getCanvasPoint(e, pCanvas);
             
             // 讀取像素
-            const pixel = pCtx.getImageData(point.x, point.y, 1, 1).data;
-            const hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
-            
-            // 設定顏色
-            brushColorInput.value = hex;
+            try {
+                const pixel = pCtx.getImageData(point.x, point.y, 1, 1).data;
+                const hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
+                brushColorInput.value = hex;
+            } catch(err) { console.error("Pick color error", err); }
             
             // 關閉吸管，自動切回筆刷
             toggleEyedropper();
@@ -361,8 +371,8 @@
 
         function toggleRangeInput() {
             const isCustom = document.querySelector('input[name="rangeType"][value="custom"]').checked;
-            customRangeInput.disabled = !isCustom;
-            if (isCustom) customRangeInput.focus();
+            document.getElementById('customRangeInput').disabled = !isCustom;
+            if (isCustom) document.getElementById('customRangeInput').focus();
         }
 
         function parsePageRange(str, totalPages) {
@@ -400,17 +410,17 @@
             fileReader.onload = async function() {
                 const typedarray = new Uint8Array(this.result);
                 try {
-                    statusMsg.textContent = '正在讀取 PDF...';
+                    statusMsg.textContent = '讀取中...';
                     statusMsg.classList.remove('hidden');
                     
                     pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
                     document.getElementById('pageCount').textContent = `共 ${pdfDoc.numPages} 頁`;
                     document.getElementById('controlPanel').classList.remove('hidden');
-                    document.getElementById('rangeSelector').classList.remove('hidden');
+                    if(document.getElementById('rangeSelector')) document.getElementById('rangeSelector').classList.remove('hidden');
                     
                     await renderPageThumbnails();
                     
-                    statusMsg.textContent = 'PDF 載入完成，請選擇頁面開始塗改或自動分析';
+                    statusMsg.textContent = '完成';
                     setTimeout(() => statusMsg.classList.add('hidden'), 3000);
                     
                 } catch (error) {
@@ -427,33 +437,32 @@
 
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 const page = await pdfDoc.getPage(i);
-                const viewport = page.getViewport({ scale: 0.3 }); 
+                const viewport = page.getViewport({ scale: 0.2 }); // Low res for thumbs
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
-                canvas.className = 'w-full h-auto border rounded mb-2 bg-white';
+                // canvas.className = 'w-full h-auto border rounded mb-2 bg-white';
                 await page.render({ canvasContext: context, viewport: viewport }).promise;
 
+                // Card (Responsive Width)
                 const card = document.createElement('div');
-                card.className = 'page-card bg-white p-3 rounded shadow cursor-pointer hover:bg-gray-50';
+                card.className = 'page-card bg-white p-2 rounded shadow shrink-0 cursor-pointer w-24 md:w-full flex flex-col items-center gap-1';
                 card.onclick = () => selectPage(i - 1);
                 card.innerHTML = `
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="font-bold text-gray-600">Page ${i}</span>
-                        <span class="status-badge text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-600">待機</span>
+                    <div class="flex justify-between items-center w-full">
+                        <span class="font-bold text-gray-500 text-xs">P.${i}</span>
+                        <span class="status-dot w-2 h-2 rounded-full bg-gray-300"></span>
                     </div>
-                    <div class="thumb-container"></div>
-                    <div class="mt-2 flex justify-between items-center">
-                        <button onclick="analyzeSinglePage(${i-1}, event)" class="analyze-btn text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded hover:bg-blue-200 w-full flex items-center justify-center gap-1">
-                            <i data-lucide="sparkles" class="w-3 h-3"></i> 分析此頁
-                        </button>
-                    </div>
+                    <div class="thumb-container w-full rounded overflow-hidden border border-gray-200"></div>
                 `;
                 
+                canvas.style.width = '100%'; canvas.style.height = 'auto';
                 card.querySelector('.thumb-container').appendChild(canvas);
                 pagesList.appendChild(card);
-                lucide.createIcons({ root: card });
+                
+                // 確保列表卡片也有圖示支援
+                if (typeof lucide !== 'undefined') lucide.createIcons({ root: card });
 
                 pdfPages.push({
                     pageNum: i,
@@ -461,13 +470,12 @@
                     status: 'idle',
                     data: null,
                     cardElement: card,
-                    maskData: null // Store drawing here
+                    maskData: null
                 });
             }
         }
 
         async function selectPage(index) {
-            // Save current mask
             if (currentPageIndex !== -1 && currentPageIndex !== index) {
                 pdfPages[currentPageIndex].maskData = maskCanvas.toDataURL();
             }
@@ -477,26 +485,23 @@
 
             document.querySelectorAll('.page-card').forEach(c => c.classList.remove('active'));
             pageData.cardElement.classList.add('active');
+            
             emptyState.classList.add('hidden');
             previewArea.classList.remove('hidden');
 
             // Render Preview Canvas
             const page = await pdfDoc.getPage(pageData.pageNum);
-            const viewport = page.getViewport({ scale: 1.0 });
+            // 手機上 scale 1.0 就夠清楚了，太大會lag，這裡設 1.5 保持品質
+            const viewport = page.getViewport({ scale: 1.5 });
             
-            const pCanvas = document.getElementById('previewCanvas');
-            const pCtx = pCanvas.getContext('2d');
-            
-            // Set dimensions for both canvases
-            pCanvas.width = viewport.width;
-            pCanvas.height = viewport.height;
+            previewCanvas.width = viewport.width;
+            previewCanvas.height = viewport.height;
             maskCanvas.width = viewport.width;
             maskCanvas.height = viewport.height;
             
-            // Render PDF
+            const pCtx = previewCanvas.getContext('2d');
             await page.render({ canvasContext: pCtx, viewport: viewport }).promise;
 
-            // Restore Mask Data
             maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
             if (pageData.maskData) {
                 const img = new Image();
@@ -504,37 +509,43 @@
                 img.src = pageData.maskData;
             }
 
-            // Fill Form
             if (pageData.data) {
-                slideTitle.value = pageData.data.title || '';
-                slideContent.value = (pageData.data.content || []).join('\n');
-                slideNotes.value = pageData.data.speaker_notes || '';
+                document.getElementById('slideTitle').value = pageData.data.title || '';
+                document.getElementById('slideContent').value = (pageData.data.content || []).join('\n');
+                document.getElementById('slideNotes').value = pageData.data.speaker_notes || '';
                 updateStatusBadge('success');
             } else {
-                slideTitle.value = '';
-                slideContent.value = '';
-                slideNotes.value = '';
+                document.getElementById('slideTitle').value = '';
+                document.getElementById('slideContent').value = '';
+                document.getElementById('slideNotes').value = '';
                 updateStatusBadge(pageData.status);
             }
         }
 
         function updateStatusBadge(status) {
             const badge = document.getElementById('currentStatusBadge');
+            const dot = pdfPages[currentPageIndex]?.cardElement.querySelector('.status-dot');
+            
             if (status === 'success') {
-                badge.className = 'bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.className = 'bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs';
                 badge.textContent = '已完成';
+                if(dot) dot.className = 'status-dot w-2 h-2 rounded-full bg-green-500';
             } else if (status === 'loading') {
-                badge.className = 'bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.className = 'bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs';
                 badge.textContent = '分析中...';
+                if(dot) dot.className = 'status-dot w-2 h-2 rounded-full bg-blue-500 animate-pulse';
             } else if (status === 'error') {
-                badge.className = 'bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.className = 'bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs';
                 badge.textContent = '失敗';
+                if(dot) dot.className = 'status-dot w-2 h-2 rounded-full bg-red-500';
             } else {
-                badge.className = 'bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-sm font-medium';
+                badge.className = 'bg-gray-200 text-gray-600 px-2 py-0.5 rounded text-xs';
                 badge.textContent = '未分析';
+                if(dot) dot.className = 'status-dot w-2 h-2 rounded-full bg-gray-300';
             }
         }
 
+        // --- V5 Core API (Gemini 2.5) ---
         async function analyzeSinglePage(index, event) {
             if (event) event.stopPropagation(); 
             
@@ -554,6 +565,7 @@
                 canvas.height = viewport.height;
                 const ctx = canvas.getContext('2d');
                 await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                // V5 Setting: 0.7 quality
                 const base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
 
                 const result = await callGeminiAPI(key, base64Image);
@@ -562,9 +574,9 @@
                 updatePageUI(index, 'success');
                 
                 if (currentPageIndex === index) {
-                    slideTitle.value = result.title || '';
-                    slideContent.value = (result.content || []).join('\n');
-                    slideNotes.value = result.speaker_notes || '';
+                    document.getElementById('slideTitle').value = result.title || '';
+                    document.getElementById('slideContent').value = (result.content || []).join('\n');
+                    document.getElementById('slideNotes').value = result.speaker_notes || '';
                 }
                 
                 checkAllDone();
@@ -581,7 +593,6 @@
             }
         }
 
-        // V5 Core API Logic - Exactly as requested
         async function callGeminiAPI(key, base64Image) {
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${key}`;
             const prompt = `分析這張簡報圖片，提取內容並回傳純 JSON。嚴格格式：{"title": "標題", "content": ["重點1", "重點2"], "speaker_notes": "備忘稿"}`;
@@ -621,55 +632,34 @@
             item.status = status;
             
             const badge = item.cardElement.querySelector('.status-badge');
-            const btn = item.cardElement.querySelector('.analyze-btn');
-            item.cardElement.classList.remove('done', 'error');
-
-            if (status === 'loading') {
-                badge.className = 'status-badge text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700';
-                badge.innerHTML = '<div class="loader inline-block align-middle mr-1" style="width:12px;height:12px;"></div>';
-                btn.disabled = true;
-                btn.textContent = '...';
-            } else if (status === 'success') {
-                item.cardElement.classList.add('done');
-                badge.className = 'status-badge text-xs px-2 py-0.5 rounded bg-green-100 text-green-700';
-                badge.textContent = '完成';
-                btn.disabled = false;
-                btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> 重做';
-                lucide.createIcons({ root: item.cardElement });
-            } else if (status === 'error') {
-                item.cardElement.classList.add('error');
-                badge.className = 'status-badge text-xs px-2 py-0.5 rounded bg-red-100 text-red-700';
-                badge.textContent = '失敗';
-                btn.disabled = false;
-                btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3 inline"></i> 重試';
-                lucide.createIcons({ root: item.cardElement });
-            }
+            // Logic handled in updateStatusBadge mainly for current view
+            
+            const dot = item.cardElement.querySelector('.status-dot');
+            if(status === 'success') dot.className = 'status-dot w-2 h-2 rounded-full bg-green-500';
+            else if(status === 'error') dot.className = 'status-dot w-2 h-2 rounded-full bg-red-500';
+            else if(status === 'loading') dot.className = 'status-dot w-2 h-2 rounded-full bg-blue-500 animate-pulse';
         }
 
         function saveCurrentSlide() {
             if (currentPageIndex === -1) return;
             const item = pdfPages[currentPageIndex];
-            
-            // Save mask
             item.maskData = maskCanvas.toDataURL();
             
             if (!item.data) item.data = {};
-            item.data.title = slideTitle.value;
-            item.data.content = slideContent.value.split('\n').filter(line => line.trim() !== '');
-            item.data.speaker_notes = slideNotes.value;
+            item.data.title = document.getElementById('slideTitle').value;
+            item.data.content = document.getElementById('slideContent').value.split('\n').filter(line => line.trim() !== '');
+            item.data.speaker_notes = document.getElementById('slideNotes').value;
             
-            if (item.status !== 'success') updatePageUI(currentPageIndex, 'success');
+            if (item.status !== 'success') {
+                item.status = 'success';
+                updateStatusBadge('success');
+            }
             checkAllDone();
             
             const btn = document.querySelector('button[onclick="saveCurrentSlide()"]');
             const originalHTML = btn.innerHTML;
             btn.textContent = '已儲存！';
-            btn.className = 'bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2';
-            setTimeout(() => {
-                btn.innerHTML = originalHTML;
-                btn.className = 'bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2';
-                lucide.createIcons({ root: btn });
-            }, 1000);
+            setTimeout(() => { btn.innerHTML = originalHTML; if(typeof lucide!=='undefined') lucide.createIcons({root:btn}); }, 1000);
         }
 
         function checkAllDone() {
@@ -687,7 +677,7 @@
             if (rangeType === 'all') {
                 pagesToProcess = pdfPages.map((_, i) => i); 
             } else {
-                const inputStr = customRangeInput.value;
+                const inputStr = document.getElementById('customRangeInput').value;
                 pagesToProcess = parsePageRange(inputStr, pdfPages.length);
                 if (pagesToProcess.length === 0) {
                     alert('請輸入有效的頁數範圍');
@@ -708,24 +698,10 @@
                 statusMsg.textContent = `自動分析第 ${i+1} 頁...`;
                 pdfPages[i].cardElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-                const success = await analyzeSinglePage(i);
+                await analyzeSinglePage(i);
                 
-                if (!success) {
-                    for(let t=60; t>0; t--) {
-                        if(!isAutoRunning) break;
-                        statusMsg.textContent = `⚠️ 第 ${i+1} 頁失敗 (避開流量限制)，休息 ${t} 秒後重試...`;
-                        await wait(1000);
-                    }
-                    if(isAutoRunning) i--; 
-                } else {
-                    if (i < pdfPages.length - 1) {
-                         for(let t=15; t>0; t--) { 
-                             if(!isAutoRunning) break;
-                             statusMsg.textContent = `✅ 第 ${i+1} 頁完成，冷卻 ${t} 秒...`;
-                             await wait(1000);
-                         }
-                    }
-                }
+                // Simple wait to prevent 429
+                if (isAutoRunning) await new Promise(r => setTimeout(r, 2000));
             }
             stopAutoRun();
             statusMsg.textContent = '分析排程結束';
@@ -737,81 +713,64 @@
             document.getElementById('stopBtn').classList.add('hidden');
         }
 
-        function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
         async function exportPPT() {
-            if (currentPageIndex !== -1) {
-                 pdfPages[currentPageIndex].maskData = maskCanvas.toDataURL();
-            }
+            if (currentPageIndex !== -1) pdfPages[currentPageIndex].maskData = maskCanvas.toDataURL();
+            
+            const btn = document.getElementById('downloadBtn');
+            btn.disabled = true;
+            btn.textContent = '處理中...';
 
             const pptx = new PptxGenJS();
             pptx.layout = 'LAYOUT_16x9';
+            
+            const useBgDesktop = document.getElementById('useBgImageDesktop');
+            const useBgMobile = document.getElementById('useBgImageMobile');
+            // 檢查是否存在，如果都不存在(理論上不應該)，預設 true
+            const useBg = (useBgDesktop && useBgDesktop.checked) || (useBgMobile && useBgMobile.checked);
 
-            const useBg = useBgImageCheck.checked;
-
-            if (useBg) {
-                const btn = document.getElementById('downloadBtn');
-                btn.disabled = true;
-                btn.textContent = '生成圖片中...';
-                await wait(100);
-            }
-
-            let count = 0;
-            for (let index = 0; index < pdfPages.length; index++) {
-                const page = pdfPages[index];
-                if (page.status !== 'success' || !page.data) continue;
-                count++;
+            for (let i = 0; i < pdfPages.length; i++) {
+                const page = pdfPages[i];
+                if (page.status !== 'success' && !page.data) continue;
 
                 const slide = pptx.addSlide();
-                const data = page.data;
+                const data = page.data || {};
 
                 if (useBg && pdfDoc) {
                     try {
                         const pdfPage = await pdfDoc.getPage(page.pageNum);
                         const viewport = pdfPage.getViewport({ scale: 1.5 });
                         const canvas = document.createElement('canvas');
-                        canvas.width = viewport.width;
-                        canvas.height = viewport.height;
-                        const ctx = canvas.getContext('2d');
-                        await pdfPage.render({ canvasContext: ctx, viewport: viewport }).promise;
+                        canvas.width = viewport.width; canvas.height = viewport.height;
+                        await pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
                         slide.background = { data: canvas.toDataURL('image/jpeg', 0.8) };
-                    } catch (e) { console.error(e); }
+                    } catch(e) {}
                 }
 
                 if (page.maskData) {
-                    slide.addImage({ 
-                        data: page.maskData, 
-                        x: 0, y: 0, w: '100%', h: '100%' 
-                    });
+                    slide.addImage({ data: page.maskData, x: 0, y: 0, w: '100%', h: '100%' });
                 }
 
-                slide.addText(data.title || `Slide ${index+1}`, { 
+                slide.addText(data.title || `Slide ${i+1}`, { 
                     x: 0.5, y: 0.5, w: '90%', h: 1.2, 
-                    fontSize: 24, bold: true, color: '363636', fontFace: 'Arial',
-                    align: 'center'
+                    fontSize: 24, bold: true, color: '363636', fontFace: 'Arial', align: 'center' 
                 });
 
                 if (data.content && data.content.length > 0) {
                     const items = data.content.map(text => ({ text: text, options: { fontSize: 18, breakLine: true } }));
                     slide.addText(items, { 
                         x: 0.5, y: 1.8, w: '90%', h: 4.5, 
-                        fontSize: 18, color: '505050', bullet: true, lineSpacing: 35,
-                        valign: 'top'
+                        fontSize: 18, color: '505050', bullet: true, lineSpacing: 35, valign: 'top' 
                     });
                 }
-
+                
                 if (data.speaker_notes) slide.addNotes(data.speaker_notes);
             }
 
-            if (useBg) {
-                 const btn = document.getElementById('downloadBtn');
-                 btn.innerHTML = '<i data-lucide="download" class="w-4 h-4"></i><span> 下載 PPT</span>';
-                 btn.disabled = false;
-                 if (typeof lucide !== 'undefined') lucide.createIcons({ root: document.getElementById('downloadBtn') });
-            }
-
-            if (count === 0) { alert('沒有可匯出的頁面'); return; }
             pptx.writeFile({ fileName: 'NotebookLM_Restored.pptx' });
+            
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="download" class="w-4 h-4"></i> <span class="hidden md:inline">下載 PPT</span><span class="md:hidden">下載</span>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         }
     </script>
 </body>
