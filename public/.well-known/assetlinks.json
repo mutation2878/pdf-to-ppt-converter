@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.vercel.pdf_to_ppt_converter.twa",
+        "sha256_cert_fingerprints": ["6C:82:04:CD:56:C6:6E:16:DF:38:2B:6F:94:B5:2B:AF:D1:E8:6B:06:B4:C8:7F:E7:C3:E7:4F:D3:D2:90:E6:33"]
+      }
+    }]
